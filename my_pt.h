@@ -7,6 +7,7 @@ struct pt_delay {
 
 #define PT_DELAY_MS(pt, pt_delay, ms) \
   do {  \
-    pt_delay.end = millis() + ms; \
+    (pt_delay).end = millis() + ms; \
     PT_WAIT_UNTIL(pt, millis() >= pt_delay.end); \
   } while(0)
+
