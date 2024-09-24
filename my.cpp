@@ -1,7 +1,8 @@
 #include "my_lib.hpp"
+#include "my_log.hpp"
 namespace my {
 
-LogPrinter LOGPRINTER;
+LogPrinter Log;
 Config CONFIG;
 
 };
