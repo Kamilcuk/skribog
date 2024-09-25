@@ -9,13 +9,14 @@
 
 namespace my {
 
+union UlongAndBytes {
+	unsigned long ul;
+	unsigned char c[sizeof(unsigned long)];
+};
+
 struct TimeAndLineStorage {
-	RingBuf<uint8_t, 1024> buffer;
+	RingBuf<uint8_t, 2048> buffer;
 	bool linestarted = false;
-	union UlongAndBytes {
-		unsigned long ul;
-		unsigned char c[sizeof(unsigned long)];
-	};
 
 	void write_startline_time() {
 		buffer.pushOverwrite('\x01');
@@ -25,16 +26,17 @@ struct TimeAndLineStorage {
 		}
 	}
 	void write(uint8_t c) {
-		if (c == '\x01') {
+		if (c == '\x01' || c == '\r') {
 			return;
 		}
 		if (!linestarted) {
+			linestarted = true;
 			write_startline_time();
 		}
-		if (c != '\n') {
-			buffer.pushOverwrite(c);
-		} else {
+		if (c == '\n') {
 			linestarted = false;
+		} else {
+			buffer.pushOverwrite(c);
 		}
 	}
 
@@ -58,7 +60,10 @@ struct TimeAndLineStorage {
 		return true;
 	}
 	bool read_line(uint8_t &c) {
-		if (buffer.peek(c) && c == '\x01') {
+		if (!buffer.peek(c)) {
+			return false;
+		}
+		if (c == '\x01') {
 			return false;
 		}
 		buffer.pop(c);
@@ -96,18 +101,28 @@ struct LogPrinter : Print {
 		println();
 	}
 
-	template <typename T> void print_logs_to_loki(T &client) {
+	template <typename T> void print_logs_to_loki(T &client, unsigned long timeoffset = 0) {
 		// {"streams":[{"stream":[{"label":"value"}],"values":[["nanoseconds", "logline"]]}}
-		client.print("{\"streams\":[{\"stream\":{\"mac\":\"");
-		client.print(WiFi.macAddress());
-		client.print("\"}}],\"values\":[");
+		client.print("{\"streams\":[{\"stream\":{");
+		{
+			client.print("\"source\":\"stribog\",");
+			client.print("\"mac\":\"");
+			client.print(WiFi.macAddress());
+			client.print("\"");
+		}
+		client.print("},\"values\":[");
 		{
 			ArduinoJson::detail::TextFormatter<T> tf(client);
 			unsigned long now;
+			bool first = true;
 			while (buffer.read_startline_time(now)) {
+				if (!first) {
+					tf.writeRaw(',');
+				}
+				first = false;
 				tf.writeRaw('[');
 				tf.writeRaw('"');
-				tf.writeInteger(now);
+				tf.writeInteger(now + timeoffset);
 				tf.writeRaw('"');
 				tf.writeRaw(',');
 				tf.writeRaw('"');
@@ -119,7 +134,45 @@ struct LogPrinter : Print {
 				tf.writeRaw(']');
 			}
 		}
-		client.print("]}");
+		client.print("]}]}");
+	}
+
+	template <typename T> void print_logs_no_flush(T &client, unsigned long timeoffset = 0) {
+		uint8_t c;
+		unsigned long now;
+		size_t i = 0;
+		int state = 0;
+		for (; i < buffer.buffer.size(); ++i) {
+			if (!buffer.buffer.peek(c, i)) {
+				break;
+			}
+			switch (state) {
+			case 0:
+				if (c == '\x01') {
+					state++;
+				}
+				break;
+			case 1:
+			case 2:
+			case 3:
+			case 4:
+				now >>= 8;
+				now |= c << 24;
+				state++;
+				break;
+			case 5:
+				client.print(now + timeoffset);
+				client.print(' ');
+				state++;
+			default:
+				client.print((char)c);
+				if (c == '\x01') {
+					client.println();
+					state = 1;
+				}
+				break;
+			}
+		}
 	}
 };
 

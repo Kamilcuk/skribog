@@ -12,6 +12,8 @@
 #include <SafeStringReader.h>
 #include <array>
 #include <utility>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 
 namespace my {
 
@@ -221,7 +223,6 @@ struct WebServerClient : Thread {
 		int (WebServerClient::*cb)();
 	};
 
-
 	char prevc = 0;
 	enum method method = METHOD_UNSET;
 
@@ -294,11 +295,19 @@ struct WebServerClient : Thread {
 		return 0;
 	}
 
-	constexpr static const std::array<Router, 4> routes = {
+	int serve_get_logs() {
+		this->send_header(STATUS_OK);
+		Log.print_logs_no_flush(client);
+		client.println();
+		return 0;
+	}
+
+	constexpr static const std::array<Router, 5> routes = {
 	    Router{METHOD_GET, "/", &WebServerClient::serve_get_slash},
 	    Router{METHOD_GET, "/config", &WebServerClient::serve_get_config},
 	    Router{METHOD_POST, "/config", &WebServerClient::serve_post_config},
 	    Router{METHOD_GET, "/logsflush", &WebServerClient::serve_get_logsflush},
+	    Router{METHOD_GET, "/logs", &WebServerClient::serve_get_logs},
 	};
 
 	//////////////////////////////////////////////
@@ -516,7 +525,21 @@ struct StateThread : Thread {
 
 ///////////////////////////////////////////////////////////
 
+struct TimeSyncThread : Thread {
+	WiFiUDP ntpUDP;
+	NTPClient timeClient(ntpUDP);
+	void run() {
+		if (WiFi.status() == WL_CONNECTED) {
+			timeClient.update();
+		}
+	}
+};
+
+///////////////////////////////////////////////////////////
+
 struct WiFiClientSecureWithWrite : public WiFiClientSecure {
+	// Problem: write(uint8_t c) is missing.
+	// Solution: this class.
 	using WiFiClientSecure::write;
 	virtual size_t write(uint8_t c) {
 		return this->WiFiClientSecure::write((const uint8_t *)&c, 1);
